@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.sqlite3
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# User uploads and collected static files
+media/
+staticfiles/
+
+# Frontend dependencies and generated build output
+frontend/node_modules/
+frontend/dist/
