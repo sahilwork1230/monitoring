@@ -1,25 +1,13 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Table as TableIcon, 
-  RefreshCw, 
-  Search, 
   ArrowUpDown, 
   ArrowUp, 
   ArrowDown, 
   ChevronLeft, 
   ChevronRight, 
-  Download, 
   Layers, 
-  User, 
-  Clock, 
   FileSpreadsheet, 
-  AlertCircle, 
-  CheckCircle2, 
   Sparkles,
-  Maximize2,
-  DollarSign,
-  Hash,
-  Eye
 } from 'lucide-react';
 import { api } from '../api';
 
@@ -33,24 +21,17 @@ export default function RenderPage() {
   // Real-time polling state
   const [latestVersion, setLatestVersion] = useState(null);
   const [latestDatasetId, setLatestDatasetId] = useState(null);
-  const [pollIntervalMs, setPollIntervalMs] = useState(2500); // 2.5 seconds
-  const [isPollingPaused, setIsPollingPaused] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSyncedTime, setLastSyncedTime] = useState(new Date());
   const [updateNotification, setUpdateNotification] = useState(null);
-  const [secondsSinceSync, setSecondsSinceSync] = useState(0);
+  const pollIntervalMs = 2500;
 
   // Table manipulation state
-  const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState('ALL');
+  const pageSize = 15;
 
   // Load initial dataset
   const fetchFullDataset = async (sheet = '') => {
     try {
-      setIsSyncing(true);
       const res = await api.getLatestData(sheet);
       if (res.has_data) {
         const datasetData = { ...res.dataset };
@@ -75,15 +56,12 @@ export default function RenderPage() {
         setLatestVersion(null);
         setLatestDatasetId(null);
       }
-      setLastSyncedTime(new Date());
-      setSecondsSinceSync(0);
       setError(null);
     } catch (err) {
       console.error('Fetch error:', err);
       setError(err.message);
     } finally {
       setLoading(false);
-      setIsSyncing(false);
     }
   };
 
@@ -92,23 +70,11 @@ export default function RenderPage() {
     fetchFullDataset();
   }, []);
 
-  // Timer for relative time indicator ("Synced X seconds ago")
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setSecondsSinceSync(prev => prev + 1);
-    }, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   // Continuous background polling for updates
   useEffect(() => {
-    if (isPollingPaused) return;
-
     const pollTimer = setInterval(async () => {
       try {
         const status = await api.checkStatus();
-        setSecondsSinceSync(0);
-        setLastSyncedTime(new Date());
 
         if (status.has_data) {
           // Detect if a newer version exists in backend
@@ -144,20 +110,14 @@ export default function RenderPage() {
     }, pollIntervalMs);
 
     return () => clearInterval(pollTimer);
-  }, [latestVersion, latestDatasetId, isPollingPaused, pollIntervalMs, activeSheet]);
+  }, [latestVersion, latestDatasetId, activeSheet]);
 
   // Handle Sheet tab switch
   const handleSheetSwitch = async (sheetName) => {
     if (sheetName === activeSheet) return;
     setActiveSheet(sheetName);
-    setSearchTerm('');
     setCurrentPage(1);
     await fetchFullDataset(sheetName);
-  };
-
-  // Manual refresh trigger
-  const handleManualRefresh = async () => {
-    await fetchFullDataset(activeSheet);
   };
 
   // Sorting handler
@@ -177,23 +137,6 @@ export default function RenderPage() {
   const processedRows = useMemo(() => {
     if (!dataset || !dataset.rows_data) return [];
     let rows = [...dataset.rows_data];
-
-    // Global Search across all fields
-    if (searchTerm.trim() !== '') {
-      const lower = searchTerm.toLowerCase();
-      rows = rows.filter(row => 
-        Object.values(row).some(val => 
-          String(val !== null && val !== undefined ? val : '').toLowerCase().includes(lower)
-        )
-      );
-    }
-
-    // Optional Category filter
-    if (selectedCategoryFilter !== 'ALL') {
-      rows = rows.filter(row => {
-        return Object.values(row).some(v => String(v).toLowerCase() === selectedCategoryFilter.toLowerCase());
-      });
-    }
 
     // Sort rows
     if (sortConfig.key) {
@@ -222,7 +165,7 @@ export default function RenderPage() {
     }
 
     return rows;
-  }, [dataset, searchTerm, selectedCategoryFilter, sortConfig]);
+  }, [dataset, sortConfig]);
 
   // Pagination calculation
   const totalPages = Math.ceil(processedRows.length / pageSize) || 1;
@@ -230,52 +173,6 @@ export default function RenderPage() {
     const start = (currentPage - 1) * pageSize;
     return processedRows.slice(start, start + pageSize);
   }, [processedRows, currentPage, pageSize]);
-
-  // Find primary numeric stat if available
-  const primaryNumericSummary = useMemo(() => {
-    if (!dataset?.summary_stats?.numeric_columns) return null;
-    const numCols = Object.entries(dataset.summary_stats.numeric_columns);
-    if (numCols.length === 0) return null;
-
-    // Prioritize revenue, amount, total, sales, or units
-    const prioritized = numCols.find(([name]) => 
-      /revenue|total|amount|sales|price|cost/i.test(name)
-    ) || numCols[0];
-
-    return {
-      name: prioritized[0],
-      sum: prioritized[1].sum,
-      avg: prioritized[1].avg,
-      count: prioritized[1].count
-    };
-  }, [dataset]);
-
-  // Export current table view as CSV
-  const exportToCSV = () => {
-    if (!dataset?.headers || processedRows.length === 0) return;
-    const headers = dataset.headers;
-    const csvContent = [
-      headers.join(','),
-      ...processedRows.map(row => 
-        headers.map(h => {
-          let cell = row[h] !== null && row[h] !== undefined ? String(row[h]) : '';
-          if (cell.includes(',') || cell.includes('"') || cell.includes('\n')) {
-            cell = `"${cell.replace(/"/g, '""')}"`;
-          }
-          return cell;
-        }).join(',')
-      )
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `${dataset.file_name || 'dataset'}_${activeSheet || 'sheet'}_export.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
 
   // Cell rendering with smart pills for known statuses
   const renderCellContent = (value, header) => {
@@ -311,7 +208,10 @@ export default function RenderPage() {
   };
 
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '30px 20px' }}>
+    <div style={{
+      width: '100%',
+      padding: totalPages > 1 ? '30px 20px 96px' : '30px 20px'
+    }}>
 
       {/* Floating Instant Update Notification Banner */}
       {updateNotification && (
@@ -350,106 +250,6 @@ export default function RenderPage() {
         </div>
       )}
 
-      {/* Top Controls & Live Sync Bar */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        flexWrap: 'wrap',
-        gap: '16px',
-        marginBottom: '28px'
-      }}>
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h1 style={{ fontSize: '1.65rem', fontWeight: 800, margin: 0 }}>
-              Live Data Monitor
-            </h1>
-          </div>
-          <p style={{ fontSize: '0.86rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-            Continuously listening for new uploads & streaming real-time dataset changes.
-          </p>
-        </div>
-
-        {/* Polling Heartbeat Control Box */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          background: 'var(--bg-card)',
-          border: '1px solid var(--border-light)',
-          padding: '8px 16px',
-          borderRadius: 'var(--radius-lg)',
-          boxShadow: 'var(--shadow-sm)'
-        }}>
-          {/* Live indicator */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span 
-              className={!isPollingPaused ? 'pulsing-beacon' : ''} 
-              style={{ 
-                backgroundColor: isPollingPaused ? '#94a3b8' : 'var(--success)',
-                width: '10px',
-                height: '10px',
-                borderRadius: '50%'
-              }} 
-            />
-            <span style={{ 
-              fontSize: '0.82rem', 
-              fontWeight: 700, 
-              color: isPollingPaused ? 'var(--text-muted)' : '#047857'
-            }}>
-              {isPollingPaused ? 'POLLING PAUSED' : 'LIVE SYNC ACTIVE'}
-            </span>
-          </div>
-
-          <div style={{ width: '1px', height: '20px', background: 'var(--border-light)' }} />
-
-          {/* Polling Interval Select */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Interval:</label>
-            <select
-              value={isPollingPaused ? 'paused' : String(pollIntervalMs)}
-              onChange={(e) => {
-                if (e.target.value === 'paused') {
-                  setIsPollingPaused(true);
-                } else {
-                  setIsPollingPaused(false);
-                  setPollIntervalMs(Number(e.target.value));
-                }
-              }}
-              style={{
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border-light)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-primary)',
-                fontSize: '0.78rem',
-                padding: '4px 8px',
-                outline: 'none',
-                cursor: 'pointer'
-              }}
-            >
-              <option value="1500" style={{ background: '#ffffff' }}>1.5s (Ultra-fast)</option>
-              <option value="2500" style={{ background: '#ffffff' }}>2.5s (Standard)</option>
-              <option value="5000" style={{ background: '#ffffff' }}>5.0s</option>
-              <option value="10000" style={{ background: '#ffffff' }}>10s</option>
-              <option value="paused" style={{ background: '#ffffff' }}>Manual Only</option>
-            </select>
-          </div>
-
-          {/* Sync Now button */}
-          <button
-            id="sync-now-btn"
-            onClick={handleManualRefresh}
-            className="btn btn-secondary btn-sm"
-            disabled={isSyncing}
-            style={{ padding: '5px 10px', fontSize: '0.78rem' }}
-            title="Force immediate refresh"
-          >
-            <RefreshCw size={13} className={isSyncing ? 'animate-spin' : ''} />
-            <span>Sync</span>
-          </button>
-        </div>
-      </div>
-
       {/* When no dataset has been uploaded yet */}
       {!loading && !dataset && (
         <div className="glass-panel" style={{ textAlign: 'center', padding: '60px 20px', margin: '30px 0' }}>
@@ -478,76 +278,6 @@ export default function RenderPage() {
       {/* Dataset Content */}
       {dataset && (
         <>
-          {/* KPI Summary Cards */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-            gap: '18px',
-            marginBottom: '26px'
-          }}>
-            {/* Card 1: Total Records */}
-            <div className="glass-panel" style={{ padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Total Records
-                </span>
-                <div style={{ color: 'var(--primary)', background: 'var(--primary-light)', padding: '6px', borderRadius: '8px' }}>
-                  <Hash size={16} />
-                </div>
-              </div>
-              <div style={{ fontSize: '1.75rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                {dataset.total_rows?.toLocaleString() || 0}
-              </div>
-              <div style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                Across {dataset.total_columns || 0} extracted columns
-              </div>
-            </div>
-
-            {/* Card 2: Active Version */}
-            <div className="glass-panel" style={{ padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Version Stream
-                </span>
-                <span className="badge badge-primary">
-                  v{dataset.version}
-                </span>
-              </div>
-              <div style={{ 
-                fontSize: '1.1rem', 
-                fontWeight: 700, 
-                color: 'var(--text-primary)',
-                whiteSpace: 'nowrap', 
-                overflow: 'hidden', 
-                textOverflow: 'ellipsis' 
-              }}>
-                {dataset.file_name}
-              </div>
-              <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '6px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <User size={12} />
-                <span>By {dataset.uploader_name}</span>
-              </div>
-            </div>
-
-            {/* Card 3: Live Polling Health */}
-            <div className="glass-panel" style={{ padding: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Sync Heartbeat
-                </span>
-                <div style={{ color: 'var(--primary)', background: 'var(--primary-light)', padding: '6px', borderRadius: '8px' }}>
-                  <Clock size={16} />
-                </div>
-              </div>
-              <div style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-                {secondsSinceSync === 0 ? 'Just now' : `${secondsSinceSync}s ago`}
-              </div>
-              <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '6px' }}>
-                Poll rate: {(pollIntervalMs / 1000).toFixed(1)}s
-              </div>
-            </div>
-          </div>
-
           {/* Worksheet Tabs (excluding regional summary) */}
           {(() => {
             const visibleSheets = (dataset.sheet_names || []).filter(
@@ -585,93 +315,6 @@ export default function RenderPage() {
             );
           })()}
 
-          {/* Table Toolbar (Search, Filter, Export, Pagination sizing) */}
-          <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '16px' }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              flexWrap: 'wrap',
-              gap: '16px'
-            }}>
-              {/* Search Box */}
-              <div style={{ position: 'relative', minWidth: '280px', flex: 1, maxWidth: '420px' }}>
-                <Search size={16} style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-muted)' }} />
-                <input
-                  id="table-search-input"
-                  type="text"
-                  placeholder="Search any record, rep, product, date..."
-                  value={searchTerm}
-                  onChange={(e) => {
-                    setSearchTerm(e.target.value);
-                    setCurrentPage(1);
-                  }}
-                  className="custom-input"
-                  style={{ width: '100%', paddingLeft: '38px', height: '40px' }}
-                />
-                {searchTerm && (
-                  <button
-                    onClick={() => setSearchTerm('')}
-                    style={{
-                      position: 'absolute',
-                      right: '10px',
-                      top: '10px',
-                      background: 'none',
-                      border: 'none',
-                      color: 'var(--text-muted)',
-                      cursor: 'pointer'
-                    }}
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-
-              {/* Action buttons */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                {/* Result count */}
-                <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)', paddingRight: '8px' }}>
-                  Showing {paginatedRows.length} of {processedRows.length} rows
-                </span>
-
-                {/* Rows per page selector */}
-                <select
-                  value={pageSize}
-                  onChange={(e) => {
-                    setPageSize(Number(e.target.value));
-                    setCurrentPage(1);
-                  }}
-                  style={{
-                    background: '#ffffff',
-                    border: '1px solid var(--border-light)',
-                    borderRadius: 'var(--radius-md)',
-                    color: 'var(--text-secondary)',
-                    fontSize: '0.82rem',
-                    padding: '8px 12px',
-                    outline: 'none',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <option value="10">10 rows</option>
-                  <option value="25">25 rows</option>
-                  <option value="50">50 rows</option>
-                  <option value="100">100 rows</option>
-                </select>
-
-                {/* Export CSV button */}
-                <button
-                  id="export-csv-btn"
-                  onClick={exportToCSV}
-                  className="btn btn-secondary btn-sm"
-                  style={{ height: '38px' }}
-                >
-                  <Download size={14} />
-                  <span>Export CSV</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
           {/* Interactive Data Table */}
           <div className="table-container" style={{ marginBottom: '20px' }}>
             <table className="custom-table" id="rendered-data-table">
@@ -704,7 +347,7 @@ export default function RenderPage() {
                 {paginatedRows.length === 0 ? (
                   <tr>
                     <td colSpan={(dataset.headers?.length || 0) + 1} style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
-                      No matching records found for "{searchTerm}".
+                      No records found in this worksheet.
                     </td>
                   </tr>
                 ) : (
@@ -739,7 +382,13 @@ export default function RenderPage() {
               border: '1px solid var(--border-light)',
               borderRadius: 'var(--radius-md)',
               flexWrap: 'wrap',
-              gap: '12px'
+              gap: '12px',
+              position: 'fixed',
+              left: '20px',
+              right: '20px',
+              bottom: '16px',
+              zIndex: 30,
+              boxShadow: 'var(--shadow-md)'
             }}>
               <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                 Page {currentPage} of {totalPages}
